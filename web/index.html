@@ -1,117 +1,273 @@
+<input type="file" id="file">
 <script>
-async function generateAndUseHexKey() {
-    // Generate a new AES-GCM key
-    const key = await generateKey();
-    console.log('Generated Key:', key);
 
-    // Import the key from the hexadecimal string
-    const importedKey = await importKey(key);
-    console.log('Imported Key:', importedKey);
-
-    // Example usage: Encrypt and decrypt a message
-    const message = "Hello, World!";
-    const encodedMessage = new TextEncoder().encode(message);
-    const encryptedMessage = await encrypt(encodedMessage, importedKey);
-    console.log('Encrypted Message:', encryptedMessage);
-
-    const decryptedMessage = await decrypt(encryptedMessage, importedKey);
-    const decodedMessage = new TextDecoder().decode(decryptedMessage);
-    console.log('Decrypted Message:', decodedMessage);
-}
-generateAndUseHexKey();
-
-async function hash(data) {
-    const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-    return arrayBufferToHex(hashBuffer);
-}
-
-async function encrypt(message, key) {
-    const iv = crypto.getRandomValues(new Uint8Array(12));
-    const encryptedContent = await crypto.subtle.encrypt(
-        {
-            name: 'AES-GCM',
-            iv: iv
-        },
-        key,
-        message
-    );
-
-    const encryptedContentArray = new Uint8Array(encryptedContent);
-    const combined = new Uint8Array(iv.length + encryptedContentArray.length);
-    combined.set(iv);
-    combined.set(encryptedContentArray, iv.length);
-
-    return arrayBufferToBase64(combined);
-}
-
-// Decrypt message function
-async function decrypt(encryptedMessage, key) {
-    const combined = base64ToArrayBuffer(encryptedMessage);
-    const iv = combined.slice(0, 12);
-    const encryptedContent = combined.slice(12);
-    const decryptedContent = await crypto.subtle.decrypt(
-        {
-            name: 'AES-GCM',
-            iv: iv
-        },
-        key,
-        encryptedContent
-    );
-
-    return decryptedContent;
-}
-
-async function generateKey() {
-    const key = await crypto.subtle.generateKey(
-        {
-            name: 'AES-GCM',
-            length: 256 // Key length can be 128, 192, or 256 bits
-        },
-        true, // Extractable, allows the key to be exported/imported
-        ['encrypt', 'decrypt'] // Key usages
-    );
-    return await exportKey(key);
-}
-
-
-async function exportKey(key) {
-    const exportedKey = await crypto.subtle.exportKey('raw', key);
-    return arrayBufferToHex(exportedKey);
-}
-
-function arrayBufferToBase64(buffer) {
-    return btoa(String.fromCharCode(...new Uint8Array(buffer)));
-}
-
-function base64ToArrayBuffer(base64) {
-    return new Uint8Array(atob(base64).split("").map(c => c.charCodeAt(0)));
-}
-
-function arrayBufferToHex(buffer) {
-    return Array.from(new Uint8Array(buffer)).map(b => b.toString(16).padStart(2, '0')).join('');
-}
-
-function hexToArrayBuffer(hex) {
-    const length = hex.length / 2;
-    const buffer = new Uint8Array(length);
-    for (let i = 0; i < length; i++) {
-        buffer[i] = parseInt(hex.substr(i * 2, 2), 16);
+    if (window.location.hash) {
+        client();
+    } else {
+        host();
     }
-    return buffer;
-}
+    async function toText(blob) {
+        if (typeof blob == 'string') return blob; // is string already
+        return new TextDecoder().decode(await blob.arrayBuffer());
+    }
+    // types 0 = host, 1 = client, 2 = server to client connection
+    async function client() {
+        document.getElementById('file').disabled = true;
+        const fileHash = window.location.hash.substring(1);
+        const ws = new WebSocket('ws://localhost:3000');
+        ws.onopen = () => {
+            console.log('connected');
+            ws.send(JSON.stringify({ e: 'info', t: 1, h: fileHash }));
+        }
+        var parts = [];
+        var info = null;
+        var last = Date.now();
+        ws.onmessage = async (event) => {
+            try {
+                if (typeof event.data == 'object' && new TextDecoder().decode(await (event.data.slice(0, 4)).arrayBuffer()) == 'data') { // is binary
+                    console.log(event.data, (Date.now() - last) / 50, 'MB/s');
+                    last = Date.now();
+                    parts.push(event.data);
+                    ws.send(JSON.stringify({ e: 'ok' }));
+                } else { // must be json
+                    const msg = JSON.parse(await toText(event.data));
+                    if (msg.e == 'ping') {
+                        ws.send(JSON.stringify({ e: 'pong' }));
+                        return;
+                    } else if (msg.e == 'info') {
+                        info = { name: msg.n, size: msg.s };
+                    } else if (msg.e == 'connect') {
 
-async function importKey(hex) {
-    const keyBuffer = hexToArrayBuffer(hex);
-    const key = await crypto.subtle.importKey(
-        'raw',
-        keyBuffer,
-        {
-            name: 'AES-GCM',
-        },
-        true, // Extractable
-        ['encrypt', 'decrypt'] // Key usages
-    );
-    return key;
-}
+                    } else if (msg.e == 'done') {
+                        const file = new File(parts, info.name);
+                        const url = URL.createObjectURL(file);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = info.name;
+                        a.click();
+                        URL.revokeObjectURL(url);
+                        ws.close();
+                    }
+                }
+            } catch (e) {
+                console.log(e);
+            }
+
+        }
+        ws.onerror = (event) => {
+            console.log(event);
+        }
+    }
+    async function host() {
+        var fileHash = null;
+        var file = null;
+        const ws = new WebSocket('ws://localhost:3000');
+        ws.onopen = () => {
+            console.log('connected');
+            setInterval(() => {
+                ws.send(JSON.stringify({ e: 'ping' }));
+            }, 10000);
+        }
+        ws.onmessage = async (event) => {
+            try {
+                const msg = JSON.parse(await toText(event.data));
+                if (msg.e == 'ping') {
+                    ws.send(JSON.stringify({ e: 'pong' }));
+                    return;
+                }
+                if (msg.e == 'connect') {
+                    const ws = new WebSocket('ws://localhost:3000');
+                    ws.onopen = () => {
+                        console.log('connected to client');
+                        ws.send(JSON.stringify({ e: 'info', t: 2, c: msg.c, h: fileHash }));
+                    }
+                    var received = true;
+                    ws.onmessage = async (event) => {
+                        try {
+                            const msg = JSON.parse(await toText(event.data));
+                            if (msg.e == 'ping') {
+                                ws.send(JSON.stringify({ e: 'pong' }));
+                                return;
+                            } else if (msg.e == 'connect') {
+                                const stream = file.stream().getReader();
+                                var done = false;
+                                while (!done) {
+                                    received = false;
+                                    var data = new Uint8Array(4);
+                                    data.set(new TextEncoder().encode('data'));
+                                    var d = 0;
+                                    while (d < 50000000 && !done) {
+                                        const { value, done: doneReading } = await stream.read();
+                                        done = doneReading;
+                                        if (done) break;
+                                        const newdata = new Uint8Array(data.length + value.length);
+                                        newdata.set(data);
+                                        newdata.set(value, data.length);
+                                        data = newdata;
+                                        d += value.length;
+                                    }
+                                    if (data) {
+                                        console.log(data.length);
+                                        ws.send(data);
+                                        //ws.send(JSON.stringify({ e: 'data', d: arrayBufferToBase64(data) }));
+                                    }
+                                    while (!received) {
+                                        await new Promise(resolve => setTimeout(resolve, 100));
+                                    }
+                                }
+                                ws.send(JSON.stringify({ e: 'done' }));
+                            } else if (msg.e == 'ok') {
+                                received = true;
+                            }
+                        } catch (e) {
+                            console.log(e);
+                        }
+                    }
+                    ws.onerror = (event) => {
+                        console.log(event);
+                    }
+                }
+            } catch (e) {
+                console.log(e);
+            }
+
+        }
+        ws.onerror = (event) => {
+            console.log(event);
+        }
+        const files = document.getElementById('file');
+        files.addEventListener('change', async (event) => {
+            files.disabled = true;
+            file = event.target.files[0];
+            fileHash = await hashText(`${file.name}:${file.size}:${file.lastModified}:${Date.now()}`);
+            ws.send(JSON.stringify({ t: 0, e: 'info', h: fileHash, n: file.name, s: file.size }));
+            console.log(fileHash);
+        });
+    }
+    async function generateAndUseHexKey() {
+        // Generate a new AES-GCM key
+        const key = await generateKey();
+        console.log('Generated Key:', key);
+
+        // Import the key from the hexadecimal string
+        const importedKey = await importKey(key);
+        console.log('Imported Key:', importedKey);
+
+        // Example usage: Encrypt and decrypt a message
+        const message = "Hello, World!";
+        const encodedMessage = new TextEncoder().encode(message);
+        const encryptedMessage = await encrypt(encodedMessage, importedKey);
+        console.log('Encrypted Message:', encryptedMessage);
+
+        const decryptedMessage = await decrypt(encryptedMessage, importedKey);
+        const decodedMessage = new TextDecoder().decode(decryptedMessage);
+        console.log('Decrypted Message:', decodedMessage);
+    }
+
+
+    async function hash(data) {
+        const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+        return arrayBufferToHex(hashBuffer);
+    }
+
+    async function hashText(text) {
+        const encoder = new TextEncoder();
+        const data = encoder.encode(text);
+        return await hash(data);
+    }
+
+    async function encrypt(message, key) {
+        const iv = crypto.getRandomValues(new Uint8Array(12));
+        const encryptedContent = await crypto.subtle.encrypt(
+            {
+                name: 'AES-GCM',
+                iv: iv
+            },
+            key,
+            message
+        );
+
+        const encryptedContentArray = new Uint8Array(encryptedContent);
+        const combined = new Uint8Array(iv.length + encryptedContentArray.length);
+        combined.set(iv);
+        combined.set(encryptedContentArray, iv.length);
+
+        return arrayBufferToBase64(combined);
+    }
+
+    // Decrypt message function
+    async function decrypt(encryptedMessage, key) {
+        const combined = base64ToArrayBuffer(encryptedMessage);
+        const iv = combined.slice(0, 12);
+        const encryptedContent = combined.slice(12);
+        const decryptedContent = await crypto.subtle.decrypt(
+            {
+                name: 'AES-GCM',
+                iv: iv
+            },
+            key,
+            encryptedContent
+        );
+
+        return decryptedContent;
+    }
+
+    async function generateKey() {
+        const key = await crypto.subtle.generateKey(
+            {
+                name: 'AES-GCM',
+                length: 256 // Key length can be 128, 192, or 256 bits
+            },
+            true, // Extractable, allows the key to be exported/imported
+            ['encrypt', 'decrypt'] // Key usages
+        );
+        return await exportKey(key);
+    }
+
+
+    async function exportKey(key) {
+        const exportedKey = await crypto.subtle.exportKey('raw', key);
+        return arrayBufferToHex(exportedKey);
+    }
+
+    function arrayBufferToBase64(buffer) {
+        var uint8Array = new Uint8Array(buffer);
+        var binaryString = '';
+        for (var i = 0; i < uint8Array.length; i++) {
+            binaryString += String.fromCharCode(uint8Array[i]);
+        }
+        return btoa(binaryString);
+    }
+
+    function base64ToArrayBuffer(base64) {
+        return new Uint8Array(atob(base64).split("").map(c => c.charCodeAt(0)));
+    }
+
+    function arrayBufferToHex(buffer) {
+        return Array.from(new Uint8Array(buffer)).map(b => b.toString(16).padStart(2, '0')).join('');
+    }
+
+    function hexToArrayBuffer(hex) {
+        const length = hex.length / 2;
+        const buffer = new Uint8Array(length);
+        for (let i = 0; i < length; i++) {
+            buffer[i] = parseInt(hex.substr(i * 2, 2), 16);
+        }
+        return buffer;
+    }
+
+    async function importKey(hex) {
+        const keyBuffer = hexToArrayBuffer(hex);
+        const key = await crypto.subtle.importKey(
+            'raw',
+            keyBuffer,
+            {
+                name: 'AES-GCM',
+            },
+            true, // Extractable
+            ['encrypt', 'decrypt'] // Key usages
+        );
+        return key;
+    }
 
 </script>
