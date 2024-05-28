@@ -14,7 +14,7 @@
     async function client() {
         document.getElementById('file').disabled = true;
         const fileHash = window.location.hash.substring(1);
-        const ws = new WebSocket('ws://localhost:3000');
+        const ws = new WebSocket('/');
         ws.onopen = () => {
             console.log('connected');
             ws.send(JSON.stringify({ e: 'info', t: 1, h: fileHash }));
@@ -61,7 +61,7 @@
     async function host() {
         var fileHash = null;
         var file = null;
-        const ws = new WebSocket('ws://localhost:3000');
+        const ws = new WebSocket('/');
         ws.onopen = () => {
             console.log('connected');
             setInterval(() => {
@@ -76,7 +76,7 @@
                     return;
                 }
                 if (msg.e == 'connect') {
-                    const ws = new WebSocket('ws://localhost:3000');
+                    const ws = new WebSocket('/');
                     ws.onopen = () => {
                         console.log('connected to client');
                         ws.send(JSON.stringify({ e: 'info', t: 2, c: msg.c, h: fileHash }));

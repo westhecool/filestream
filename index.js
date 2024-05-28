@@ -1,4 +1,5 @@
 const ws = require('ws');
+const fs = require('fs');
 const http = require('http');
 const wss = new ws.Server({ noServer: true });
 const server = http.createServer();
@@ -96,8 +97,7 @@ wss.on('connection', (ws, request) => {
 });
 
 server.on('request', (request, response) => {
-    response.writeHead(404);
-    response.end();
+    response.end(fs.readFileSync('web/index.html'));
 });
 
 server.on('upgrade', (request, socket, head) => {
