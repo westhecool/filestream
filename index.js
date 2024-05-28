@@ -97,6 +97,7 @@ wss.on('connection', (ws, request) => {
 });
 
 server.on('request', (request, response) => {
+    response.writeHead(200, { 'Content-Type': 'text/html' });
     response.end(fs.readFileSync('web/index.html'));
 });
 
