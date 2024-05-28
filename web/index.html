@@ -1,0 +1,117 @@
+<script>
+async function generateAndUseHexKey() {
+    // Generate a new AES-GCM key
+    const key = await generateKey();
+    console.log('Generated Key:', key);
+
+    // Import the key from the hexadecimal string
+    const importedKey = await importKey(key);
+    console.log('Imported Key:', importedKey);
+
+    // Example usage: Encrypt and decrypt a message
+    const message = "Hello, World!";
+    const encodedMessage = new TextEncoder().encode(message);
+    const encryptedMessage = await encrypt(encodedMessage, importedKey);
+    console.log('Encrypted Message:', encryptedMessage);
+
+    const decryptedMessage = await decrypt(encryptedMessage, importedKey);
+    const decodedMessage = new TextDecoder().decode(decryptedMessage);
+    console.log('Decrypted Message:', decodedMessage);
+}
+generateAndUseHexKey();
+
+async function hash(data) {
+    const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+    return arrayBufferToHex(hashBuffer);
+}
+
+async function encrypt(message, key) {
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const encryptedContent = await crypto.subtle.encrypt(
+        {
+            name: 'AES-GCM',
+            iv: iv
+        },
+        key,
+        message
+    );
+
+    const encryptedContentArray = new Uint8Array(encryptedContent);
+    const combined = new Uint8Array(iv.length + encryptedContentArray.length);
+    combined.set(iv);
+    combined.set(encryptedContentArray, iv.length);
+
+    return arrayBufferToBase64(combined);
+}
+
+// Decrypt message function
+async function decrypt(encryptedMessage, key) {
+    const combined = base64ToArrayBuffer(encryptedMessage);
+    const iv = combined.slice(0, 12);
+    const encryptedContent = combined.slice(12);
+    const decryptedContent = await crypto.subtle.decrypt(
+        {
+            name: 'AES-GCM',
+            iv: iv
+        },
+        key,
+        encryptedContent
+    );
+
+    return decryptedContent;
+}
+
+async function generateKey() {
+    const key = await crypto.subtle.generateKey(
+        {
+            name: 'AES-GCM',
+            length: 256 // Key length can be 128, 192, or 256 bits
+        },
+        true, // Extractable, allows the key to be exported/imported
+        ['encrypt', 'decrypt'] // Key usages
+    );
+    return await exportKey(key);
+}
+
+
+async function exportKey(key) {
+    const exportedKey = await crypto.subtle.exportKey('raw', key);
+    return arrayBufferToHex(exportedKey);
+}
+
+function arrayBufferToBase64(buffer) {
+    return btoa(String.fromCharCode(...new Uint8Array(buffer)));
+}
+
+function base64ToArrayBuffer(base64) {
+    return new Uint8Array(atob(base64).split("").map(c => c.charCodeAt(0)));
+}
+
+function arrayBufferToHex(buffer) {
+    return Array.from(new Uint8Array(buffer)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+function hexToArrayBuffer(hex) {
+    const length = hex.length / 2;
+    const buffer = new Uint8Array(length);
+    for (let i = 0; i < length; i++) {
+        buffer[i] = parseInt(hex.substr(i * 2, 2), 16);
+    }
+    return buffer;
+}
+
+async function importKey(hex) {
+    const keyBuffer = hexToArrayBuffer(hex);
+    const key = await crypto.subtle.importKey(
+        'raw',
+        keyBuffer,
+        {
+            name: 'AES-GCM',
+        },
+        true, // Extractable
+        ['encrypt', 'decrypt'] // Key usages
+    );
+    return key;
+}
+
+</script>
